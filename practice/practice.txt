@@ -10,6 +10,10 @@ program fem_practice
     use fem_types
     implicit none
 
+
+    !==================================
+    !【Step0:配列の確保】
+    !==================================
     !【メッシュ情報】
     integer :: nx, ny ! x,y方向の分割数
     integer :: n_nodes ! 全ノード数
@@ -24,6 +28,14 @@ program fem_practice
     double precision, allocatable ::F_vec(:)　!力ベクトル
     double precision, allocatable :: u_vec(:)!未知数ベクトル
     double precision, allocatable :: K_local(:,:)!要素剛性行列
+    integer,          allocatable :: coo_row(:), coo_col(:)
+    double precision, allocatable :: coo_val(:)
+    integer,          allocatable :: row_ptr(:), col_idx(:)
+    double precision, allocatable :: values(:)
+
+    !　【静的配列】
+    integer :: coo_nnz
+    integer :: coo_ptr
 
 
     !===================================
@@ -67,11 +79,22 @@ program fem_practice
 
 
     !==================================
-    !【Step4:全体剛性行列作成】
+    !【Step4:要素剛性行列作成】
     !==================================
+    coo_nnz = n_elems * 9
+
     do e = 1, n_elems
         idx = elems(e,n_edges)
+        call calc_elem_stiffness(nodes(idx(1)), nodes(idx(2)), nodes(idx(3)), K_local)
+        do i = 1, 3
+            do j = 1,3
+                coo_ptr = coo_ptr + 1
+                coo_row(coo_ptr) = idx(i)
 
+
+    ＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠
+    ここから！！！
+    ＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠＠
 
 
 

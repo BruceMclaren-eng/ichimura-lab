@@ -17,7 +17,7 @@ program solve_laplace_fem
     integer :: nx, ny
     integer :: n_nodes, n_elems
     integer :: i, j, k, e
-    integer :: idx(3)
+    integer :: global_nodes(3)
 
     double precision :: x_min, x_max, y_min, y_max
 
@@ -64,14 +64,14 @@ program solve_laplace_fem
     print *, "--- Mesh Generated: Nodes =", n_nodes, " Elements =", n_elems
 
     do e = 1, n_elems
-        idx = elems(e, :)
+        global_nodes = elems(e, :)
         call calc_elem_stiffness( &
-            nodes(idx(1)), nodes(idx(2)), nodes(idx(3)), K_local)
+            nodes(global_nodes(1)), nodes(global_nodes(2)), nodes(global_nodes(3)), K_local)
         do i = 1, 3
             do j = 1, 3
                 coo_ptr = coo_ptr + 1
-                coo_row(coo_ptr) = idx(i)
-                coo_col(coo_ptr) = idx(j)
+                coo_row(coo_ptr) = global_nodes(i)
+                coo_col(coo_ptr) = global_nodes(j)
                 coo_val(coo_ptr) = K_local(i, j)
             end do
         end do
@@ -244,7 +244,7 @@ contains
         double precision :: mat_J(2,2), mat_L(2,2)
         double precision :: detJ, val_m, area
         double precision :: v(3,2), res(3,2)
-        integer :: i, j_idx
+        integer :: i, j_global_nodes
 
         ! 節点座標を配列にセット（以降の計算でループを使いやすくするため）
         x(1) = p1%x;  y(1) = p1%y
@@ -302,9 +302,9 @@ contains
         !   = (∂Ni/∂x)(∂Nj/∂x) + (∂Ni/∂y)(∂Nj/∂y)) × area
         ! 対称行列になる（∇Ni·∇Nj = ∇Nj·∇Ni）。
         do i = 1, 3
-            do j_idx = 1, 3
-                k_mat(i, j_idx) = (res(i,1)*res(j_idx,1) &
-                                 + res(i,2)*res(j_idx,2)) * area
+            do j_global_nodes = 1, 3
+                k_mat(i, j_global_nodes) = (res(i,1)*res(j_global_nodes,1) &
+                                 + res(i,2)*res(j_global_nodes,2)) * area
             end do
         end do
 

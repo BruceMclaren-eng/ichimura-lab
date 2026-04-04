@@ -24,6 +24,8 @@ program fem_practice
     double precision, allocatable ::F_vec(:)　!力ベクトル
     double precision, allocatable :: u_vec(:)!未知数ベクトル
     double precision, allocatable :: K_local(:,:)!要素剛性行列
+
+
     !===================================
     !【Step1:メッシュの作成】
     !===================================    
@@ -52,6 +54,26 @@ program fem_practice
     allocate(F_vec(n_nodes))
     allocate(u_vec(n_nodes))
     allocate(K_local(n_edges,n_edges))
+
+
+    !==================================
+    !【Step3:メッシュ生成】
+    !==================================
+    call generate_nodes(nx,ny,x_max,x_min,y_max,y_min,nodes)
+    call generate_elems(nx,ny,elems)
+    print *, "Mesh Generated"
+    print *, "Generated Nodes : " , n_nodes
+    print *, "Generated Elements" , n_elems
+
+
+    !==================================
+    !【Step4:全体剛性行列作成】
+    !==================================
+    do e = 1, n_elems
+        idx = elems(e,n_edges)
+
+
+
 
     !節点の座標と要素のノード番号の定義
     subroutine generate_nodes(nx,ny,x_max,x_min,y_max,y_min,nodes)
@@ -91,10 +113,21 @@ program fem_practice
                 n4 = n3 + 1             !right upper node
 
                 !triangle 1: (n1, n2, n4)
-                elem_id = elem_id +1
+                elem_id = elem_id + 1
                 elems(elem_id,1) = n1
                 elems(elem_id,2) = n2
                 elems(elem_id,3) = n4
 
                 !triangle 2: (n1,n4,n3)
-                
+                elems_id = elem_id + 1
+                elems(elem_id,1) = n1
+                elems(elem_id,2) = n4
+                elems(elem_it,3) = n3
+            end do
+        end do
+
+    !要素剛性行列の計算
+    subroutine calc_element_stiffness(p1,p2,p3, k_mat)
+    type(pair), intent(in) :: p1,p2,p3
+    double precision, intent(out) :: k_mat(3,3)
+    double precision :: x(3)

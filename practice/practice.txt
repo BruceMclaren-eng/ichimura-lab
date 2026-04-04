@@ -131,7 +131,7 @@ program fem_practice
         type(pair), intent(in) :: p1,p2,p3
         double precision, intent(out) :: k_mat(3,3)
         double precision :: x(3), y(3)
-        double precision :: mat_J(2:2), mat_L(2,2)
+        double precision :: mat_J(2,2), mat_L(2,2)
         double precision :: detJ, val_m, area
         double precision :: v(3,2), res(3,2)
         integer :: i,j_idx
@@ -155,24 +155,26 @@ program fem_practice
         !ヤコビアンの逆行列計算
         mat_L(1,1) = val_m * mat_J(2,2)
         mat_L(1,2) = -val_m * mat_J(1,2)
-        mat_L(2,1) = -val_m * mat_J(1,2)
+        mat_L(2,1) = -val_m * mat_J(2,1)
         mat_L(2,2) = val_m * mat_J(1,1)
 
         !局所微分の計算
         v(1,1) = - 1.0d0; v(1,2) = - 1.0d0
         v(2,1) =   1.0d0; v(2,2) =   0.0d0
-        v(3,1) =   0.0d0; v(3,2) = - 1.0d0
+        v(3,1) =   0.0d0; v(3,2) =   1.0d0
 
         !全体座標微分への変換
         do i = 1, 3
-            res(i,1) = mat_J(1,1) * v(i,1) + mat_J(2,1) * v(i,2)
-            res(i,2) = mat_J(2,1) * v(i,1) + mat_J(2,2) * v(i,2)
+            res(i,1) = mat_J(1,1) * v(i,1) + mat_L(2,1) * v(i,2)
+            res(i,2) = mat_J(2,1) * v(i,1) + mat_L(2,2) * v(i,2)
         end do
 
         !要素剛性行列 k_matの計算
         do i = 1, 3
             do j_idx = 1,3
-                kmat(i, j_idx) = res(i,1)*res(j_idx,1) + res(i,2)*res(j_idx,2) * area
+                kmat(i, j_idx) = (res(i,1)*res(j_idx,1) + res(i,2)*res(j_idx,2)) * area
             end do
         end do
     end subroutine
+
+    !CRSの計算

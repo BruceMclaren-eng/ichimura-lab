@@ -24,6 +24,8 @@ program fem_practice
     double precision, allocatable ::F_vec(:)　!力ベクトル
     double precision, allocatable :: u_vec(:)!未知数ベクトル
     double precision, allocatable :: K_local(:,:)!要素剛性行列
+
+
     !===================================
     !【Step1:メッシュの作成】
     !===================================    
@@ -53,11 +55,31 @@ program fem_practice
     allocate(u_vec(n_nodes))
     allocate(K_local(n_edges,n_edges))
 
+
+    !==================================
+    !【Step3:メッシュ生成】
+    !==================================
+    call generate_nodes(nx,ny,x_max,x_min,y_max,y_min,nodes)
+    call generate_elems(nx,ny,elems)
+    print *, "Mesh Generated"
+    print *, "Generated Nodes : " , n_nodes
+    print *, "Generated Elements" , n_elems
+
+
+    !==================================
+    !【Step4:全体剛性行列作成】
+    !==================================
+    do e = 1, n_elems
+        idx = elems(e,n_edges)
+
+
+
+
     !節点の座標と要素のノード番号の定義
     subroutine generate_nodes(nx,ny,x_max,x_min,y_max,y_min,nodes)
-        integer, intent(in):: nx, ny
-        double precision, intent(in) :: x_max, x_min, y_max, y_min
-        type(pair), intent(out) :: nodes(:)
+        integer, intent(in):: nx, ny !the number of node split
+        double precision, intent(in) :: x_max, x_min, y_max, y_min ! maximam and minimam x, y
+        type(pair), intent(out) :: nodes(:) !nodes' coordinate
         integer :: i, j, node_id
         double precision :: dx, dy
 
@@ -91,10 +113,66 @@ program fem_practice
                 n4 = n3 + 1             !right upper node
 
                 !triangle 1: (n1, n2, n4)
-                elem_id = elem_id +1
+                elem_id = elem_id + 1
                 elems(elem_id,1) = n1
                 elems(elem_id,2) = n2
                 elems(elem_id,3) = n4
 
                 !triangle 2: (n1,n4,n3)
-                
+                elems_id = elem_id + 1
+                elems(elem_id,1) = n1
+                elems(elem_id,2) = n4
+                elems(elem_it,3) = n3
+            end do
+        end do
+
+    !要素剛性行列の計算
+    subroutine calc_element_stiffness(p1,p2,p3, k_mat)
+        type(pair), intent(in) :: p1,p2,p3
+        double precision, intent(out) :: k_mat(3,3)
+        double precision :: x(3), y(3)
+        double precision :: mat_J(2:2), mat_L(2,2)
+        double precision :: detJ, val_m, area
+        double precision :: v(3,2), res(3,2)
+        integer :: i,j_idx
+
+        !節点座標をセット
+        x(1) = p1%x; y(1) = p1%y
+        x(2) = p2%x; y(2) = p2%y
+        x(3) = p3%x; y(3) = p3%y
+
+        !ヤコビアンを作成
+        mat_J(1,1) = - x(1) + x(2)
+        mat_J(1,2) = - y(1) + y(2)
+        mat_J(2,1) = - x(1) + x(3)
+        mat_J(2,2) = - y(1) + y(3)
+
+
+        detJ = mat_J(1,1) * mat_J(2,2) - mat_J(1,2) * mat_J(2,1) !行列式の計算
+        val_m = 1.0d0 / detJ !逆行列の係数
+        area = abs(detJ) * 0.5d0 !三角形の実面積
+        
+        !ヤコビアンの逆行列計算
+        mat_L(1,1) = val_m * mat_J(2,2)
+        mat_L(1,2) = -val_m * mat_J(1,2)
+        mat_L(2,1) = -val_m * mat_J(1,2)
+        mat_L(2,2) = val_m * mat_J(1,1)
+
+        !局所微分の計算
+        v(1,1) = - 1.0d0; v(1,2) = - 1.0d0
+        v(2,1) =   1.0d0; v(2,2) =   0.0d0
+        v(3,1) =   0.0d0; v(3,2) = - 1.0d0
+
+        !全体座標微分への変換
+        do i = 1, 3
+            res(i,1) = mat_J(1,1) * v(i,1) + mat_J(2,1) * v(i,2)
+            res(i,2) = mat_J(2,1) * v(i,1) + mat_J(2,2) * v(i,2)
+        end do
+
+        !要素剛性行列 k_matの計算
+        do i = 1, 3
+            do j_idx = 1,3
+                kmat(i, j_idx) = res(i,1)*res(j_idx,1) + res(i,2)*res(j_idx,2) * area
+            end do
+        end do
+    end subroutine

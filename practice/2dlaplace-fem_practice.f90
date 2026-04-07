@@ -10,6 +10,10 @@ program fem_practice
     use fem_types
     implicit none
 
+
+    !==================================
+    !【Step0:配列の確保】
+    !==================================
     !【メッシュ情報】
     integer :: nx, ny ! x,y方向の分割数
     integer :: n_nodes ! 全ノード数
@@ -24,6 +28,14 @@ program fem_practice
     double precision, allocatable ::F_vec(:)　!力ベクトル
     double precision, allocatable :: u_vec(:)!未知数ベクトル
     double precision, allocatable :: K_local(:,:)!要素剛性行列
+    integer,          allocatable :: coo_row(:), coo_col(:)
+    double precision, allocatable :: coo_val(:)
+    integer,          allocatable :: row_ptr(:), col_idx(:)
+    double precision, allocatable :: values(:)
+
+    !　【静的配列】
+    integer :: coo_nnz
+    integer :: coo_ptr
 
 
     !===================================
@@ -67,10 +79,28 @@ program fem_practice
 
 
     !==================================
-    !【Step4:全体剛性行列作成】
+    !【Step4:要素剛性行列作成】
     !==================================
+    coo_nnz = n_elems * 9 !非ゼロ要素の最大値で定義
+    allocate(coo_row(coo_nnz))
+    allocate(coo_col(coo_nnz))
+    allocate(coo_val(coo_nnz))
+    coo_ptr = 0
+
     do e = 1, n_elems
-        idx = elems(e,n_edges)
+        global_nodes = elems(e,n_edges)
+        call calc_elem_stiffness(nodes(global_nodes(1)), nodes(global_nodes(2)), nodes(global_nodes(3)), K_local)
+        do i = 1, 3
+            do j = 1,3
+                coo_ptr = coo_ptr + 1
+                coo_row(coo_ptr) = global_nodes(i)
+                coo_col(coo_ptr) = global_nodes(j)
+                coo_val(coo_ptr) = K_local(i,j)
+            end do
+        end do
+    end do
+
+    print *, "COO Assembly Done"
 
 
 
@@ -177,4 +207,91 @@ program fem_practice
         end do
     end subroutine
 
-    !CRSの計算
+    !要素剛性行列COOから全体剛性行列CRSへの変換
+    subroutine coo_to_crs(coo_row, coo_col, coo_val, nnz_in, n, row_ptr, col_idx, values)
+        integer,                        intent(in) :: coo_row(:), coo_col(:), nnz_in, n 
+        double precision,               intent(in) :: coo_val(:)
+        integer, allocatable,          intent(out) :: row_ptr(:), col_idx(:)
+        double precision, allocatable, intent(out) :: values(:)
+
+        integer          :: i, k, col, nnz
+        integer          :: used_cols(20)
+        integer          :: used_count
+        integer,          allocatable :: pos(:)
+        integer,          allocatable :: sorted_col(:)
+        integer,          allocatable :: row_ptr_orig(:)
+        double precision, allocatable :: sorted_val(:)
+        double precision, allocatable :: dense_buffer(:)
+
+
+        ! row_ptrの作成
+        allotcate(row_ptr(n+1))
+        row_ptr = 0
+
+        do k = 1, nnz_in
+            row_ptr(coo_row(k) + 1) = row_ptr(coo_row(k) + 1) + 1
+        end do
+
+        row_ptr(1) = 1
+        do i = 1, n
+            row_ptr(i+1) = row_ptr(i+1) + row_ptr(i)
+        end do
+
+        !cooの暫定準備
+        allocate(pos(n))
+        allocate(sorted_col(nnz_in))
+        allocate(sorted_val(nnz_in))
+
+        pos = row_ptr(1:n)
+
+        do k = 1, nnz_in
+            i = coo_row(k)
+            sorted_col(pos(i)) = coo_col(k)
+            sorted_val(pos(i)) = coo_val(k)
+            pos(i) = pos(i) + 1
+        end do
+        dellocate(pos)
+
+        !重複の処理
+        allocate(row_ptr_orig(n+1))
+        row_ptr_orig = roq_ptr
+
+        allocate(dense_buffer(n))
+        allocate(col_idx(nnz_in))
+        allocate(values(nnz_in))
+
+        dense_buffer = 0.0d0
+
+        nnz = 0
+        row_ptr(1) = 1
+
+        do i = 1, n
+            used_count = 0
+
+            do k = row_ptr_orig(i), row_ptr_orig(i+1) - 1
+                col = sorted_col(k)
+
+                if (dense_buffer(col) == 0.0d0) then
+                    used_count = used_count + 1
+                    used_cols(used_count) = col
+                end if
+
+                dense_buffer(col) = dense_buffer(col) + sorted_val(k)
+            end do
+
+            do k = 1, used_count
+                col = used_cols(k)
+                nnz = nnz + 1
+                col_idx(nnz) = col
+                values(nnz) = dense_buffer(col)
+                demse_buffer(col) = 0.0d0
+            end do 
+
+            row_ptr(i+1) = nnz + 1
+        end do
+
+        dellocate(row_ptr_orig,dense_buffer,sortred_col,sorted_val)
+
+    end subtoutine
+
+    

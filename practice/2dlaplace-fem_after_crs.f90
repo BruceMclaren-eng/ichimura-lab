@@ -78,8 +78,7 @@ program solve_laplace_fem
     end do
     print *, "--- COO Assembly Done: entries (with duplicates) =", coo_ptr
 
-    call coo_to_crs(coo_row, coo_col, coo_val, coo_ptr, &
-                    n_nodes, row_ptr, col_idx, values)
+    call coo_to_crs(coo_row, coo_col, coo_val, coo_ptr, n_nodes, row_ptr, col_idx, values)
     print *, "--- CRS Conversion Done: nnz (unique) =", row_ptr(n_nodes+1)-1
 
     deallocate(coo_row, coo_col, coo_val)
@@ -330,119 +329,90 @@ contains
     !   n                         : 行列のサイズ（節点数）[in]
     !   row_ptr, col_idx, values  : CRS配列               [out]
     !==========================================================================
-    subroutine coo_to_crs(coo_row, coo_col, coo_val, nnz_in, &
+   subroutine coo_to_crs(coo_row, coo_col, coo_val, nnz_in, &
                        n, row_ptr, col_idx, values)
-        integer,          intent(in)  :: coo_row(:), coo_col(:), nnz_in, n
-        double precision, intent(in)  :: coo_val(:)
-        integer,          allocatable, intent(out) :: row_ptr(:), col_idx(:)
-        double precision, allocatable, intent(out) :: values(:)
+    integer,          intent(in)  :: coo_row(:), coo_col(:), nnz_in, n
+    double precision, intent(in)  :: coo_val(:)
+    integer,          allocatable, intent(out) :: row_ptr(:), col_idx(:)
+    double precision, allocatable, intent(out) :: values(:)
 
-        integer :: i, nnz
-        integer, allocatable :: order(:)
-        integer, allocatable :: sorted_row(:), sorted_col(:)
-        double precision, allocatable :: sorted_val(:)
+    integer          :: i, k, col, nnz
+    integer          :: used_cols(20)
+    integer          :: used_count
+    integer,          allocatable :: pos(:)
+    integer,          allocatable :: sorted_col(:)
+    integer,          allocatable :: row_ptr_orig(:)
+    double precision, allocatable :: sorted_val(:)
+    double precision, allocatable :: dense_buffer(:)
 
-        ! ── Step1: (row,col)の辞書順でソート ──
-        ! ソート後に同じ(row,col)のエントリが隣接するようにするため。
-        ! order(i) = j は「ソート後のi番目は元のj番目」を意味する添字配列。
-        ! 元のCOO配列を直接並べ替えず、添字だけ並べ替えることで
-        ! 元データへの書き込みを避ける（intent(in)なので必須）。
-        allocate(order(nnz_in))
-        do i = 1, nnz_in
-            order(i) = i   ! 初期状態：順番通り
-        end do
-        call sort_coo(coo_row, coo_col, order, nnz_in)
+    ! ── Step1: counting sort で row_ptr を構築 ──
+    allocate(row_ptr(n+1))
+    row_ptr = 0
 
-        ! ソート済みの順番で新しい配列に並べ直す
-        ! これ以降は sorted_* を使って処理する
-        allocate(sorted_row(nnz_in))
-        allocate(sorted_col(nnz_in))
-        allocate(sorted_val(nnz_in))
-        do i = 1, nnz_in
-            sorted_row(i) = coo_row(order(i))
-            sorted_col(i) = coo_col(order(i))
-            sorted_val(i) = coo_val(order(i))
-        end do
-        deallocate(order)   ! 添字配列は不要になったので解放
+    do k = 1, nnz_in
+        row_ptr(coo_row(k) + 1) = row_ptr(coo_row(k) + 1) + 1
+    end do
 
-        ! ── Step2: 重複を加算しながら圧縮 ──
-        ! ソート済みなので同じ(row,col)は必ず隣接している。
-        ! 1つ前のエントリと(row,col)が同じなら加算、違えば新エントリ。
-        ! これにより複数の要素から寄与された同じ節点ペアの値が正しく合算される。
-        allocate(col_idx(nnz_in))   ! 最大サイズで確保（圧縮後はnnzのみ使用）
-        allocate(values(nnz_in))
+    row_ptr(1) = 1
+    do i = 1, n
+        row_ptr(i+1) = row_ptr(i+1) + row_ptr(i)
+    end do
 
-        nnz = 1                        ! 圧縮後のエントリ数カウンタ
-        col_idx(1) = sorted_col(1)
-        values(1)  = sorted_val(1)
+    ! ── Step2: COOエントリを行ごとに仕分け ──
+    allocate(pos(n))
+    allocate(sorted_col(nnz_in))
+    allocate(sorted_val(nnz_in))
 
-        do i = 2, nnz_in
-            if (sorted_row(i) == sorted_row(i-1) .and. &
-                sorted_col(i) == sorted_col(i-1)) then
-                ! 同じ(row,col) → 既存エントリに加算
-                ! 例：要素Aと要素Bが共有する節点ペア(i,j)の寄与を足し合わせる
-                values(nnz) = values(nnz) + sorted_val(i)
-            else
-                ! 新しい(row,col) → 新しいエントリとして追加
-                nnz = nnz + 1
-                col_idx(nnz) = sorted_col(i)
-                values(nnz)  = sorted_val(i)
+    pos = row_ptr(1:n)
+
+    do k = 1, nnz_in
+        i              = coo_row(k)
+        sorted_col(pos(i)) = coo_col(k)
+        sorted_val(pos(i)) = coo_val(k)
+        pos(i)         = pos(i) + 1
+    end do
+    deallocate(pos)
+
+    ! ── Step3: dense buffer で重複を加算・圧縮 ──
+    allocate(row_ptr_orig(n+1))
+    row_ptr_orig = row_ptr   ! 仕分け用row_ptrを保存
+
+    allocate(dense_buffer(n))
+    allocate(col_idx(nnz_in))
+    allocate(values(nnz_in))
+    dense_buffer = 0.0d0
+
+    nnz        = 0
+    row_ptr(1) = 1
+
+    do i = 1, n
+        used_count = 0
+
+        do k = row_ptr_orig(i), row_ptr_orig(i+1) - 1
+            col = sorted_col(k)
+
+            if (dense_buffer(col) == 0.0d0) then
+                used_count = used_count + 1
+                used_cols(used_count) = col
             end if
-        end do
-        ! この時点でnnzが圧縮後のユニーク非ゼロ数
 
-        ! ── Step3: row_ptr の構築 ──
-        ! row_ptr(i) = i行目の最初の非ゼロエントリのvalues/col_idx上の位置
-        ! row_ptr(n+1) = nnz+1（番兵：最終行の終端を示す）
-        !
-        ! 手順：
-        !   (a) sorted_rowを走査し、新しい(row,col)が現れるたびに
-        !       その行のカウンタをインクリメント
-        !       → row_ptr(i+1) に行iのユニーク非ゼロ数が入る
-        !   (b) 累積和を取ってrow_ptrを完成させる
-        allocate(row_ptr(n+1))
-        row_ptr = 0   ! まず全ゼロで初期化
-
-        ! (a) 各行のユニーク非ゼロ数を row_ptr(行番号+1) にカウント
-        ! +1 ずらして入れるのは、後の累積和計算を簡単にするため
-        do i = 1, nnz_in
-            ! 新しい(row,col)の組み合わせのときだけカウント（重複はスキップ）
-            if (i == 1 .or. sorted_row(i) /= sorted_row(i-1) .or. &
-                             sorted_col(i) /= sorted_col(i-1)) then
-                row_ptr(sorted_row(i) + 1) = row_ptr(sorted_row(i) + 1) + 1
-            end if
+            dense_buffer(col) = dense_buffer(col) + sorted_val(k)
         end do
 
-        ! (b) 累積和でrow_ptrを完成させる（1始まり）
-        ! 例：各行の非ゼロ数が [2, 3, 1] なら
-        !     row_ptr = [1, 3, 6, 7] になる
-        row_ptr(1) = 1
-        do i = 1, n
-            row_ptr(i+1) = row_ptr(i+1) + row_ptr(i)
+        do k = 1, used_count
+            col       = used_cols(k)
+            nnz       = nnz + 1
+            col_idx(nnz) = col
+            values(nnz)  = dense_buffer(col)
+            dense_buffer(col) = 0.0d0
         end do
 
-        deallocate(sorted_row, sorted_col, sorted_val)
+        row_ptr(i+1) = nnz + 1
+    end do
 
-    end subroutine coo_to_crs
+    deallocate(row_ptr_orig, dense_buffer, sorted_col, sorted_val)
 
-
-    !==========================================================================
-    ! subroutine: sort_coo
-    !
-    ! 【目的】
-    !   COOエントリを(row,col)の辞書順（行優先、同行内は列順）に
-    !   並べるための insertion sort。
-    !   元の配列は変更せず、添字配列 order だけを並べ替える。
-    !
-    ! 【insertion sortの仕組み】
-    !   i=2から順に、order(i)を適切な位置に挿入する。
-    !   既ソート部分 order(1..i-1) の中で挿入位置を探して右にずらす。
-    !   O(n²) のため大規模問題では遅い（要改善）。
-    !
-    ! 【引数】
-    !   coo_row, coo_col : 並べ替えの基準となるCOO配列  [in]
-    !   order            : 添字配列（並べ替え結果）       [inout]
-    !   n                : エントリ数                     [in]
+end subroutine coo_to_crs
     !==========================================================================
     subroutine sort_coo(coo_row, coo_col, order, n)
         integer, intent(in)    :: coo_row(:), coo_col(:), n

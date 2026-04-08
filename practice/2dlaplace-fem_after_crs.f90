@@ -78,7 +78,8 @@ program solve_laplace_fem
     end do
     print *, "--- COO Assembly Done: entries (with duplicates) =", coo_ptr
 
-    call coo_to_crs(coo_row, coo_col, coo_val, coo_ptr, n_nodes, row_ptr, col_idx, values)
+    call coo_to_crs(coo_row, coo_col, coo_val, coo_ptr, &
+n_nodes, row_ptr, col_idx, values)
     print *, "--- CRS Conversion Done: nnz (unique) =", row_ptr(n_nodes+1)-1
 
     deallocate(coo_row, coo_col, coo_val)
@@ -87,26 +88,14 @@ program solve_laplace_fem
     print *, "--- Applying Boundary Conditions ---"
 
     do i = 1, n_nodes
-        bc_value = 0.0d0
         if (abs(nodes(i)%y - 0.0d0) < 1.0d-6) then
             is_fixed(i) = .true.
-            bc_value    = 0.0d0
+            U_vec(i)    = 0.0d0
+            call apply_dirichlet_row(i, n_nodes, values, col_idx, row_ptr, F_vec, 0.0d0)
         else if (abs(nodes(i)%y - 2.0d0) < 1.0d-6) then
             is_fixed(i) = .true.
-            bc_value    = 1.0d0
-        end if
-        if (is_fixed(i)) then
-            U_vec(i) = bc_value
-            do k = 1, n_nodes
-                call crs_subtract_col(k, i, bc_value, &
-                                      values, col_idx, row_ptr, F_vec)
-            end do
-        end if
-    end do
-
-    do i = 1, n_nodes
-        if (is_fixed(i)) then
-            call apply_dirichlet_row(i, n_nodes, values, col_idx, row_ptr, F_vec, U_vec(i))
+            U_vec(i)    = 1.0d0
+            call apply_dirichlet_row(i, n_nodes, values, col_idx, row_ptr, F_vec, 1.0d0)
         end if
     end do
 
@@ -412,75 +401,7 @@ contains
 
     deallocate(row_ptr_orig, dense_buffer, sorted_col, sorted_val)
 
-end subroutine coo_to_crs
-    !==========================================================================
-    subroutine sort_coo(coo_row, coo_col, order, n)
-        integer, intent(in)    :: coo_row(:), coo_col(:), n
-        integer, intent(inout) :: order(:)
-        integer :: i, j, tmp
-
-        do i = 2, n
-            tmp = order(i)   ! 今から挿入するエントリの元インデックス
-            j   = i - 1      ! 既ソート部分の末尾から比較を始める
-
-            ! tmp が指すエントリより大きいエントリを右に1つずつずらす
-            ! 比較基準：まず行番号、同行なら列番号
-            do while (j >= 1 .and. &
-                      (coo_row(order(j)) > coo_row(tmp) .or. &
-                      (coo_row(order(j)) == coo_row(tmp) .and. &
-                       coo_col(order(j)) >  coo_col(tmp))))
-                order(j+1) = order(j)   ! 1つ右にずらす
-                j = j - 1
-            end do
-            order(j+1) = tmp   ! 適切な位置に挿入
-        end do
-
-    end subroutine sort_coo
-
-
-    !==========================================================================
-    ! subroutine: crs_subtract_col
-    !
-    ! 【目的】
-    !   Dirichlet境界条件適用のStep A：右辺ベクトルの修正。
-    !   境界節点 col_target の既知値 bc_val を使って
-    !   F(row) -= K(row, col_target) * bc_val を計算する。
-    !
-    ! 【なぜこの処理が必要か】
-    !   全体方程式 K u = F を既知節点(b)と未知節点(a)に分けると：
-    !     Kaa ua = Fa - Kab ub
-    !   「Kab ub を右辺に移項する」のがこの処理。
-    !   密行列版では K_global(row, i) に直接アクセスできたが、
-    !   CRS版では列方向の直接アクセスができないので行を走査して探す。
-    !
-    ! 【引数】
-    !   row        : 修正する行番号           [in]
-    !   col_target : 境界節点のグローバル番号 [in]
-    !   bc_val     : 境界節点の既知値         [in]
-    !   values, col_idx, row_ptr : CRS配列   [in]
-    !   F_vec      : 右辺ベクトル（修正対象）[inout]
-    !==========================================================================
-    subroutine crs_subtract_col(row, col_target, bc_val, &
-                                 values, col_idx, row_ptr, F_vec)
-        integer,          intent(in)    :: row, col_target
-        double precision, intent(in)    :: bc_val
-        double precision, intent(in)    :: values(:)
-        integer,          intent(in)    :: col_idx(:), row_ptr(:)
-        double precision, intent(inout) :: F_vec(:)
-        integer :: k
-
-        ! row行のCRSエントリを走査して、列番号が col_target のものを探す
-        ! row_ptr(row) ～ row_ptr(row+1)-1 が row行の非ゼロエントリの範囲
-        do k = row_ptr(row), row_ptr(row+1)-1
-            if (col_idx(k) == col_target) then
-                ! 発見：右辺から K(row, col_target)*bc_val を引く
-                F_vec(row) = F_vec(row) - values(k) * bc_val
-                return   ! 同じ列は1つしかないので見つかったら即終了
-            end if
-        end do
-        ! 見つからない場合：K(row, col_target) = 0 なので何もしない
-
-    end subroutine crs_subtract_col
+    end subroutine coo_to_crs
 
 
     !==========================================================================

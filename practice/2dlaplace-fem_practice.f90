@@ -52,7 +52,7 @@ program fem_practice
     !全ノード数
     n_nodes = (nx + 1) * (ny + 1)
     !全要素数
-    n_elems = nx * ny　* 2
+    n_elems = nx * ny * 2
     !メッシュの辺の数
     n_edges = 3
 
@@ -102,7 +102,43 @@ program fem_practice
 
     print *, "COO Assembly Done"
 
+    call coo_to_crs(coo_row, coo_col, coo_val, coo_ptr, n_nodes, row_ptr, col_idx, values)
+    print *, "CRS Conversion Done: nnz =", row_ptr(n_nodes + 1) - 1
+    deallocate(coo_row, coo_col, coo_val)
 
+    !==================================
+    !【Step5:ベクトルFの作成】
+    !==================================
+    do i = 1, n_nodes
+        if(abs(nodes(i)%y - 0.0d0) < 1.0d-6) then
+            is_fixed(i) = .true.
+            U_vec(i) = 0.0d0
+            call dirichlet_row(i, n_nodes, values, col_idx, row_ptr, F_vec, 0.0d0)
+        else if(abs(nodes(i)%y - 2.0d0) < 1.0d-6) then
+            is_fixed(i) = .true.
+            U_vec(i) = 1.0d0
+            call dirichlet_row(i, n_nodes, values, col_idx, row_ptr, F_vec, 1.0d0)
+        end if
+    end do
+
+    !==================================
+    !【Step6:方程式を解く】
+    !==================================
+    
+    call cg_solver(n_nodes, values, col_idx, row_ptr, F_vec, U_vec)
+
+    print *, "========================================"
+    print *, " FINAL RESULTS (Nodal Values)"
+    print *, "========================================"
+    print *, " Node ID |   X      Y    |   U(x,y)  | Exact(y/2)"
+    print *, "---------+---------------+-----------+-----------"
+    do i = 1, n_nodes
+        write(*, '(I6, "   |", F6.2, " ", F6.2, "  |", F10.5, " |", F10.5)') &
+            i, nodes(i)%x, nodes(i)%y, U_vec(i), nodes(i)%y / 2.0d0
+    end do
+
+    deallocate(nodes, elems, F_vec, U_vec, is_fixed)
+    deallocate(row_ptr, col_idx, values)
 
 
     !節点の座標と要素のノード番号の定義
@@ -250,7 +286,7 @@ program fem_practice
             sorted_val(pos(i)) = coo_val(k)
             pos(i) = pos(i) + 1
         end do
-        dellocate(pos)
+        deallocate(pos)
 
         !重複の処理
         allocate(row_ptr_orig(n+1))
@@ -284,14 +320,58 @@ program fem_practice
                 nnz = nnz + 1
                 col_idx(nnz) = col
                 values(nnz) = dense_buffer(col)
-                demse_buffer(col) = 0.0d0
+                dense_buffer(col) = 0.0d0
             end do 
 
             row_ptr(i+1) = nnz + 1
         end do
 
-        dellocate(row_ptr_orig,dense_buffer,sortred_col,sorted_val)
+        deallocate(row_ptr_orig,dense_buffer,sortred_col,sorted_val)
 
-    end subtoutine
+    end subroutine
+
+    subroutine matvec(n, values, col_idx, row_ptr, x, y)
+        integer, intent(in) :: n
+        double precision, intent(in) :: values(:), x(:)
+        integer, intent(in) :: col_idx(:), row_ptr(:)
+        double precision, intent(inout) :: y(:)
+
+        integer :: i, k
+
+        do i = 1, n
+            y(i) = 0.0d0
+            do k = row_ptr(i), row_ptr(i+1) - 1
+                y(i) = y(i) + values(k) * x(col_idx(k))
+            end do
+        end do
+    end subroutine
 
     
+    subroutine dirichlet_row(node, n, valuesm, col_idx, row_ptr, F_vec, bc_val)
+        integer, intent(in) :: node, n
+        double precision, intent(in) :: valuesm(:)
+        integer, intent(in) :: col_idx(:), row_ptr(:)
+        double precision, intent(in) :: bc_val
+        integer :: k
+
+        do k = row_ptr(node), rowptr(node + 1) -1
+            if (col_idx(k)  node) then
+                values(k) = 1.0d0
+            else
+                values(k) = 0.0d0
+            end if
+        end do
+
+        F_vec(node) = bc_val
+    end subroutine
+
+
+    subroutine cg_solver(n, values, col_idx, row_ptr, b, x)
+        integer, intent(in) :: n
+        double precision, intent(in) :: values(:), b(:)
+        integer, intent(in) :: col_idx(:), row_ptr(:)
+        double precision, intent(inout) :: x(:)
+
+        double precision :: r(n), p(n), Ap(n)
+        double precision :: alpha, beta, rr, rr_new
+        integer :: iter, ii, kk

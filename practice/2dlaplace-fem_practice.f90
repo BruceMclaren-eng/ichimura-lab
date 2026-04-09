@@ -17,15 +17,14 @@ program fem_practice
     !【メッシュ情報】
     integer :: nx, ny ! x,y方向の分割数
     integer :: n_nodes ! 全ノード数
-    integer :: n_elems　! 全要素数
+    integer :: n_elems ! 全要素数
     double precision :: x_min, x_max, y_min, y_max !領域の定義
     integer :: n_edges !メッシュの辺の数
     
     ! 【動的配列】
     type(pair), allocatable :: nodes(:)!ノードの座標
     integer, allocatable :: elems(:,:) !要素のノード（要素の番号,要素上の接点番号）
-    double precision, allocatable :: K_global(:,:)!全体剛性行列
-    double precision, allocatable ::F_vec(:)　!力ベクトル
+    double precision, allocatable ::F_vec(:) !力ベクトル
     double precision, allocatable :: u_vec(:)!未知数ベクトル
     double precision, allocatable :: K_local(:,:)!要素剛性行列
     integer,          allocatable :: coo_row(:), coo_col(:)
@@ -36,6 +35,9 @@ program fem_practice
     !　【静的配列】
     integer :: coo_nnz
     integer :: coo_ptr
+    integer :: e, i, j
+    integer :: global_nodes(3)
+    logical, allocatable :: is_fixed(:)
 
 
     !===================================
@@ -47,8 +49,8 @@ program fem_practice
     y_min = 0.0d0
     y_max = 2.0d0
     !分割数の定義
-    nx = 1
-    ny = 2
+    nx = 200
+    ny = 400
     !全ノード数
     n_nodes = (nx + 1) * (ny + 1)
     !全要素数
@@ -62,7 +64,6 @@ program fem_practice
     !==================================
     allocate(nodes(n_nodes))
     allocate(elems(n_elems,n_edges))
-    allocate(K_global(n_nodes,n_nodes))
     allocate(F_vec(n_nodes))
     allocate(u_vec(n_nodes))
     allocate(K_local(n_edges,n_edges))
@@ -88,7 +89,7 @@ program fem_practice
     coo_ptr = 0
 
     do e = 1, n_elems
-        global_nodes = elems(e,n_edges)
+        global_nodes = elems(e,:)
         call calc_elem_stiffness(nodes(global_nodes(1)), nodes(global_nodes(2)), nodes(global_nodes(3)), K_local)
         do i = 1, 3
             do j = 1,3
@@ -109,6 +110,8 @@ program fem_practice
     !==================================
     !【Step5:ベクトルFの作成】
     !==================================
+    allocate(is_fixed(n_nodes))
+    is_fixed = .false.
     do i = 1, n_nodes
         if(abs(nodes(i)%y - 0.0d0) < 1.0d-6) then
             is_fixed(i) = .true.
@@ -141,8 +144,11 @@ program fem_practice
     deallocate(row_ptr, col_idx, values)
 
 
+
+contains
     !節点の座標と要素のノード番号の定義
     subroutine generate_nodes(nx,ny,x_max,x_min,y_max,y_min,nodes)
+        implicit none
         integer, intent(in):: nx, ny !the number of node split
         double precision, intent(in) :: x_max, x_min, y_max, y_min ! maximam and minimam x, y
         type(pair), intent(out) :: nodes(:) !nodes' coordinate
@@ -158,22 +164,23 @@ program fem_practice
             do i = 0, nx
                 node_id = node_id +1
                 nodes(node_id)%x = x_min + dble(i) * dx
-                nodes(node_id)%y = y_min + dble(i) * dy
+                nodes(node_id)%y = y_min + dble(j) * dy
             end do
         end do
     end subroutine
 
     !要素コネクティビティの生成
     subroutine generate_elems(nx,ny,elems)
+        implicit none
         integer, intent(in) :: nx, ny
         integer, intent(out) :: elems(:,:)
         integer :: i,j, elem_id
         integer :: n1, n2, n3, n4
 
         elem_id = 0
-        do j = 0, ny
-            do i = 0, nx
-                n1 = j * (nx + 1) + i   !left lower node
+        do j = 0, ny-1
+            do i = 0, nx-1
+                n1 = j * (nx + 1) + i + 1  !left lower node
                 n2 = n1 + 1             !right lower node
                 n3 = n1 + nx + 1        !left upper node
                 n4 = n3 + 1             !right upper node
@@ -185,15 +192,17 @@ program fem_practice
                 elems(elem_id,3) = n4
 
                 !triangle 2: (n1,n4,n3)
-                elems_id = elem_id + 1
+                elem_id = elem_id + 1
                 elems(elem_id,1) = n1
                 elems(elem_id,2) = n4
-                elems(elem_it,3) = n3
+                elems(elem_id,3) = n3
             end do
         end do
+    end subroutine
 
     !要素剛性行列の計算
-    subroutine calc_element_stiffness(p1,p2,p3, k_mat)
+    subroutine calc_elem_stiffness(p1,p2,p3, k_mat)
+        implicit none
         type(pair), intent(in) :: p1,p2,p3
         double precision, intent(out) :: k_mat(3,3)
         double precision :: x(3), y(3)
@@ -238,7 +247,7 @@ program fem_practice
         !要素剛性行列 k_matの計算
         do i = 1, 3
             do j_idx = 1,3
-                kmat(i, j_idx) = (res(i,1)*res(j_idx,1) + res(i,2)*res(j_idx,2)) * area
+                k_mat(i, j_idx) = (res(i,1)*res(j_idx,1) + res(i,2)*res(j_idx,2)) * area
             end do
         end do
     end subroutine
@@ -261,7 +270,7 @@ program fem_practice
 
 
         ! row_ptrの作成
-        allotcate(row_ptr(n+1))
+        allocate(row_ptr(n+1))
         row_ptr = 0
 
         do k = 1, nnz_in
@@ -269,8 +278,8 @@ program fem_practice
         end do
 
         row_ptr(1) = 1
-        do i = 1, n
-            row_ptr(i+1) = row_ptr(i+1) + row_ptr(i)
+        do i = 2, n+1
+            row_ptr(i) = row_ptr(i) + row_ptr(i-1)
         end do
 
         !cooの暫定準備
@@ -290,7 +299,7 @@ program fem_practice
 
         !重複の処理
         allocate(row_ptr_orig(n+1))
-        row_ptr_orig = roq_ptr
+        row_ptr_orig = row_ptr
 
         allocate(dense_buffer(n))
         allocate(col_idx(nnz_in))
@@ -326,7 +335,7 @@ program fem_practice
             row_ptr(i+1) = nnz + 1
         end do
 
-        deallocate(row_ptr_orig,dense_buffer,sortred_col,sorted_val)
+        deallocate(row_ptr_orig,dense_buffer,sorted_col,sorted_val)
 
     end subroutine
 
@@ -348,23 +357,24 @@ program fem_practice
 
     
     subroutine dirichlet_row(node, n, valuesm, col_idx, row_ptr, F_vec, bc_val)
+        implicit none
         integer, intent(in) :: node, n
-        double precision, intent(in) :: valuesm(:)
+        double precision, intent(inout) :: valuesm(:)   ! inout に変更
         integer, intent(in) :: col_idx(:), row_ptr(:)
+        double precision, intent(inout) :: F_vec(:)     ! 追加
         double precision, intent(in) :: bc_val
         integer :: k
 
-        do k = row_ptr(node), rowptr(node + 1) -1
-            if (col_idx(k)  node) then
-                values(k) = 1.0d0
+        do k = row_ptr(node), row_ptr(node + 1) - 1
+            if (col_idx(k) == node) then
+                valuesm(k) = 1.0d0   ! values → valuesm
             else
-                values(k) = 0.0d0
+                valuesm(k) = 0.0d0   ! values → valuesm
             end if
         end do
 
         F_vec(node) = bc_val
     end subroutine
-
 
     subroutine cg_solver(n, values, col_idx, row_ptr, b, x)
         integer, intent(in) :: n
@@ -375,3 +385,23 @@ program fem_practice
         double precision :: r(n), p(n), Ap(n)
         double precision :: alpha, beta, rr, rr_new
         integer :: iter, ii, kk
+
+        call matvec(n, values, col_idx, row_ptr, x, Ap)
+        r = b - Ap
+        p = r
+        rr = dot_product(r, r)
+
+        do iter = 1, 10000
+            if (sqrt(rr) < 1.0d-10) exit
+            call matvec(n, values, col_idx, row_ptr, p, Ap)
+            alpha = rr / dot_product(p, Ap)
+            x = x + alpha * p
+            r = r - alpha * Ap
+            rr_new = dot_product(r, r)
+            beta = rr_new / rr
+            p = r + beta * p
+            rr = rr_new
+        end do
+    end subroutine
+
+end program 

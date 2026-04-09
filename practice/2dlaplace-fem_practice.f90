@@ -38,8 +38,9 @@ program fem_practice
     integer :: e, i, j
     integer :: global_nodes(3)
     logical, allocatable :: is_fixed(:)
+    real :: t_start, t_end
 
-
+    call cpu_time(t_start)
     !===================================
     !【Step1:メッシュの作成】
     !===================================    
@@ -143,6 +144,12 @@ program fem_practice
     deallocate(nodes, elems, F_vec, U_vec, is_fixed)
     deallocate(row_ptr, col_idx, values)
 
+
+    !==================================
+    !【Step7:計算時間の出力】
+    !==================================
+    call cpu_time(t_end)
+    print *, "Total Computation Time: ", t_end - t_start, " seconds"
 
 
 contains

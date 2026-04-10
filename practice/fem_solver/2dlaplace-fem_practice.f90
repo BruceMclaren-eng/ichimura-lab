@@ -393,13 +393,18 @@ contains
         double precision :: alpha, beta, rr, rr_new
         integer :: iter, ii, kk
 
+        !====================================
+        !【データ転送（CPU→GPU）】
+        !====================================
+        !$acc data copyin(values, col_idx, row_ptr, b) copy(x) create(r, p, Ap)
+
         call matvec(n, values, col_idx, row_ptr, x, Ap)
         r = b - Ap
         p = r
         rr = dot_product(r, r)
 
-        do iter = 1, 10000
-            if (sqrt(rr) < 1.0d-10) exit
+        do iter = 1, 2*n
+            if (rr < 1.0d-20) exit
             call matvec(n, values, col_idx, row_ptr, p, Ap)
             alpha = rr / dot_product(p, Ap)
             x = x + alpha * p

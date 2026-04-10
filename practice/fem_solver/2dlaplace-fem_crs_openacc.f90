@@ -50,8 +50,8 @@ program fem_practice
     y_min = 0.0d0
     y_max = 2.0d0
     !分割数の定義
-    nx = 200
-    ny = 400
+    nx = 500
+    ny = 1000
     !全ノード数
     n_nodes = (nx + 1) * (ny + 1)
     !全要素数
@@ -353,30 +353,31 @@ contains
         double precision, intent(inout) :: y(:)
 
         integer :: i, k
-
+        !$acc kernels
         do i = 1, n
             y(i) = 0.0d0
             do k = row_ptr(i), row_ptr(i+1) - 1
                 y(i) = y(i) + values(k) * x(col_idx(k))
             end do
         end do
+        !$acc end kernels
     end subroutine
 
     
     subroutine dirichlet_row(node, n, valuesm, col_idx, row_ptr, F_vec, bc_val)
         implicit none
         integer, intent(in) :: node, n
-        double precision, intent(inout) :: valuesm(:)   ! inout に変更
+        double precision, intent(inout) :: valuesm(:)   
         integer, intent(in) :: col_idx(:), row_ptr(:)
-        double precision, intent(inout) :: F_vec(:)     ! 追加
+        double precision, intent(inout) :: F_vec(:)     
         double precision, intent(in) :: bc_val
         integer :: k
 
         do k = row_ptr(node), row_ptr(node + 1) - 1
             if (col_idx(k) == node) then
-                valuesm(k) = 1.0d0   ! values → valuesm
+                valuesm(k) = 1.0d0   
             else
-                valuesm(k) = 0.0d0   ! values → valuesm
+                valuesm(k) = 0.0d0  
             end if
         end do
 
@@ -390,30 +391,78 @@ contains
         double precision, intent(inout) :: x(:)
 
         double precision :: r(n), p(n), Ap(n)
-        double precision :: alpha, beta, rr, rr_new
+        double precision :: alpha, beta, rr, rr_new, pAp
         integer :: iter, ii, kk
 
         !====================================
         !【データ転送（CPU→GPU）】
         !====================================
-        !$acc data copyin(values, col_idx, row_ptr, b) copy(x) create(r, p, Ap)
+        !$acc data copyin(values, col_idx, row_ptr, b) 
+        !$acc copy(x) 
+        !$acc create(r, p, Ap)
 
         call matvec(n, values, col_idx, row_ptr, x, Ap)
-        r = b - Ap
-        p = r
-        rr = dot_product(r, r)
 
-        do iter = 1, 2*n
-            if (rr < 1.0d-20) exit
-            call matvec(n, values, col_idx, row_ptr, p, Ap)
-            alpha = rr / dot_product(p, Ap)
-            x = x + alpha * p
-            r = r - alpha * Ap
-            rr_new = dot_product(r, r)
+        !【初期残差と初期探索方向の計算】
+        !$acc parallel loop
+        do i = 1, n
+            r(i) = b(i) - Ap(i)
+            p(i) = r(i)
+        end do
+        !$acc end parallel loop
+
+
+        !【初期残差の大きさ計算】
+        rr = 0.0d0
+        !$acc parallel loop reduction(+:rr)
+        do i = 1, n
+            rr = rr + r(i) * r(i)
+        end do
+        !$acc end parallel loop
+
+
+        do iter = 1,2 *n
+            if (rr < 1.0d0-20) exit
+                
+            !【alphaの計算】
+            !$acc parallel loop reduction(+:pAp)
+            pAp = 0.0d0
+            do i = 1, n
+                pAp = pAp + p(i) * Ap(i)
+            end do
+            !$acc end parallel loop
+            alpha = rr / pAp
+
+            !【xとrの更新】
+            !$acc parallel loop
+            do i = 1, n
+                x(i) = x(i) + alpha * p(i)
+                r(i) = r(i) - alpha * Ap(i)
+            end do
+            !$acc end parallel loop
+
+            !【新しい残差の大きさ計算】
+            rr_new = 0.0d0
+            !$acc parallel loop reduction(+:rr_new)
+            do i = 1, n
+                rr_new = rr_new + r(i) * r(i)
+            end do
+            !$acc end parallel loop
+
+            !【betaの計算】
             beta = rr_new / rr
-            p = r + beta * p
+
+            !【pの更新】
+            !$acc parallel loop
+            do i = 1, n
+                p(i) = r(i) + beta * p(i)
+            end do
+            !$acc end parallel loop
+
+            !【残差の大きさの更新】
             rr = rr_new
         end do
+        !$acc end data
     end subroutine
 
 end program 

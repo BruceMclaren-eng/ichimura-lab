@@ -424,8 +424,8 @@ contains
             if (rr < 1.0d0-20) exit
                 
             !【alphaの計算】
-            !$acc parallel loop reduction(+:pAp)
             pAp = 0.0d0
+            !$acc parallel loop reduction(+:pAp)
             do i = 1, n
                 pAp = pAp + p(i) * Ap(i)
             end do

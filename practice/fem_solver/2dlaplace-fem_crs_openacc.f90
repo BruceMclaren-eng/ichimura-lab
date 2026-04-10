@@ -397,9 +397,8 @@ contains
         !====================================
         !【データ転送（CPU→GPU）】
         !====================================
-        !$acc data copyin(values, col_idx, row_ptr, b) 
-        !$acc copy(x) 
-        !$acc create(r, p, Ap)
+        !$acc data copyin(values, col_idx, row_ptr, b) copy(x) create(r, p, Ap, alpha, beta, rr, rr_new, pAp)
+
 
         call matvec(n, values, col_idx, row_ptr, x, Ap)
 

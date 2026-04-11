@@ -471,7 +471,7 @@ contains
             call system_clock(t1)
             t_pAp = t_pAp + real(t1 - t0) / real(count_rate)
             
-            alpha = rr / 
+            alpha = rr / pAp
             
             !【xとrの更新】
             call system_clock(t0, count_rate)

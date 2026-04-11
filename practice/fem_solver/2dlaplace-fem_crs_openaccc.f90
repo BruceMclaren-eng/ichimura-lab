@@ -423,6 +423,7 @@ contains
         do iter = 1,2 *n
             if (rr < 1.0d0-20) exit
                 
+            call matvec(n, values, col_idx, row_ptr, p, Ap)
             !【alphaの計算】
             pAp = 0.0d0
             !$acc parallel loop reduction(+:pAp)

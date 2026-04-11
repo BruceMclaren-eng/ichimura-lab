@@ -392,7 +392,7 @@ contains
 
         double precision :: r(n), p(n), Ap(n)
         double precision :: alpha, beta, rr, rr_new, pAp
-        integer(8) :: t0, t1, count_rate
+        integer(8) :: t0, t1, count_rate, iter
         real(8) :: t_matvec_init      ! 初期matvec
         real(8) :: t_matvec_iter      ! ループ内matvec（累積）
         real(8) :: t_init_rp          ! 初期r,p設定

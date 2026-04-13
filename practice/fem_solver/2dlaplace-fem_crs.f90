@@ -50,8 +50,8 @@ program fem_practice
     y_min = 0.0d0
     y_max = 2.0d0
     !分割数の定義
-    nx = 500
-    ny = 1000
+    nx = 1000
+    ny = 4000
     !全ノード数
     n_nodes = (nx + 1) * (ny + 1)
     !全要素数
@@ -131,15 +131,15 @@ program fem_practice
     
     call cg_solver(n_nodes, values, col_idx, row_ptr, F_vec, U_vec)
 
-    print *, "========================================"
-    print *, " FINAL RESULTS (Nodal Values)"
-    print *, "========================================"
-    print *, " Node ID |   X      Y    |   U(x,y)  | Exact(y/2)"
-    print *, "---------+---------------+-----------+-----------"
-    do i = 1, n_nodes
-        write(*, '(I6, "   |", F6.2, " ", F6.2, "  |", F10.5, " |", F10.5)') &
-            i, nodes(i)%x, nodes(i)%y, U_vec(i), nodes(i)%y / 2.0d0
-    end do
+    !print *, "========================================"
+    !print *, " FINAL RESULTS (Nodal Values)"
+    !print *, "========================================"
+    !print *, " Node ID |   X      Y    |   U(x,y)  | Exact(y/2)"
+    !print *, "---------+---------------+-----------+-----------"
+    !do i = 1, n_nodes
+    !    write(*, '(I6, "   |", F6.2, " ", F6.2, "  |", F10.5, " |", F10.5)') &
+    !        i, nodes(i)%x, nodes(i)%y, U_vec(i), nodes(i)%y / 2.0d0
+    !end do
 
     deallocate(nodes, elems, F_vec, U_vec, is_fixed)
     deallocate(row_ptr, col_idx, values)
@@ -410,6 +410,8 @@ contains
             p = r + beta * p
             rr = rr_new
         end do
+
+        print *, "反復回数：", iter - 1
     end subroutine
 
 end program 

@@ -1,6 +1,6 @@
 V35 :0x24 fem_types
-29 2dlaplace-fem_crs_openacc.f90 S624 0
-04/10/2026  18:02:48
+21 2dlaplace-fem_crs.f90 S624 0
+04/11/2026  16:40:18
 enduse
 D 58 26 626 16 625 7
 D 64 23 7 1 0 11 0 0 0 0 0

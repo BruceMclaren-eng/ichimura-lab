@@ -31,6 +31,7 @@ program fem_practice
     double precision, allocatable :: coo_val(:)
     integer,          allocatable :: row_ptr(:), col_idx(:)
     double precision, allocatable :: values(:)
+    double precision, allocatable :: diag(:)
 
     !　【静的配列】
     integer :: coo_nnz
@@ -125,11 +126,22 @@ program fem_practice
         end if
     end do
 
+    allocate(diag(n_nodes))
+    do i = 1, n_nodes
+        diag(i) = 0.0d0
+        do j = row_ptr(i), row_ptr(i+1) - 1
+            if (col_idx(j) == i) then
+                diag(i) = values(j)
+                exit
+            end if
+        end do
+    end do
     !==================================
     !【Step6:方程式を解く】
     !==================================
     
-    call cg_solver(n_nodes, values, col_idx, row_ptr, F_vec, U_vec)
+    call pcg_solver(n_nodes, values, col_idx, row_ptr, F_vec, U_vec, diag)
+    deallocate(diag)
     print *, "Calculation Finished"
     !print *, "========================================"
     !print *, " FINAL RESULTS (Nodal Values)"
@@ -384,142 +396,76 @@ contains
         F_vec(node) = bc_val
     end subroutine
 
-    subroutine cg_solver(n, values, col_idx, row_ptr, b, x)
-        integer, intent(in) :: n
-        double precision, intent(in) :: values(:), b(:)
-        integer, intent(in) :: col_idx(:), row_ptr(:)
-        double precision, intent(inout) :: x(:)
+    subroutine pcg_solver(n, values, col_idx, row_ptr, b, x, diag)
+    integer, intent(in) :: n
+    double precision, intent(in) :: values(:), b(:), diag(:)
+    integer, intent(in) :: col_idx(:), row_ptr(:)
+    double precision, intent(inout) :: x(:)
 
-        double precision :: r(n), p(n), Ap(n)
-        double precision :: alpha, beta, rr, rr_new, pAp
-        integer(8) :: t0, t1, count_rate, iter
-        real(8) :: t_matvec_init      ! 初期matvec
-        real(8) :: t_matvec_iter      ! ループ内matvec（累積）
-        real(8) :: t_init_rp          ! 初期r,p設定
-        real(8) :: t_init_rr          ! 初期rr計算
-        real(8) :: t_pAp              ! pAp計算（累積）
-        real(8) :: t_update_xrrrnew   ! x,r,rr_new更新（累積）
-        real(8) :: t_update_p         ! p更新（累積)
+    double precision :: r(n), p(n), Ap(n), z(n)
+    double precision :: alpha, beta, rz, rz_new, pAp
+    integer :: iter, i
 
-        t_matvec_init = 0.0d0
-        t_matvec_iter = 0.0d0
-        t_init_rp = 0.0d0
-        t_init_rr = 0.0d0
-        t_pAp = 0.0d0
-        t_update_xrrrnew = 0.0d0
-        t_update_p = 0.0d0
+    !$acc data copyin(values, col_idx, row_ptr, b, diag) &
+    !$acc      copy(x) &
+    !$acc      create(r, p, Ap, z)
 
+    ! 初期残差
+    call matvec(n, values, col_idx, row_ptr, x, Ap)
+    !$acc parallel loop
+    do i = 1, n
+        r(i) = b(i) - Ap(i)
+        z(i) = r(i) / diag(i)   ! Jacobi前処理
+        p(i) = z(i)
+    end do
+    !$acc end parallel loop
 
-        !====================================
-        !【データ転送（CPU→GPU）】
-        !====================================
-        !$acc data copyin(values, col_idx, row_ptr, b) copy(x) create(r, p, Ap)
+    rz = 0.0d0
+    !$acc parallel loop reduction(+:rz)
+    do i = 1, n
+        rz = rz + r(i) * z(i)
+    end do
+    !$acc end parallel loop
 
-        call system_clock(t0, count_rate)
-        call matvec(n, values, col_idx, row_ptr, x, Ap)
-        !$acc wait
-        call system_clock(t1)
-        t_matvec_init = real(t1 - t0) / real(count_rate)
+    do iter = 1, 2*n
+        if (rz < 1.0d-10) exit
 
-        
-        !【初期残差と初期探索方向の計算】
-        call system_clock(t0, count_rate)
+        call matvec(n, values, col_idx, row_ptr, p, Ap)
+
+        pAp = 0.0d0
+        !$acc parallel loop reduction(+:pAp)
+        do i = 1, n
+            pAp = pAp + p(i) * Ap(i)
+        end do
+        !$acc end parallel loop
+
+        alpha = rz / pAp
+
+        rz_new = 0.0d0
+        !$acc parallel loop reduction(+:rz_new)
+        do i = 1, n
+            x(i) = x(i) + alpha * p(i)
+            r(i) = r(i) - alpha * Ap(i)
+            z(i) = r(i) / diag(i)   ! Jacobi前処理
+            rz_new = rz_new + r(i) * z(i)
+        end do
+        !$acc end parallel loop
+
+        beta = rz_new / rz
+
         !$acc parallel loop
         do i = 1, n
-            r(i) = b(i) - Ap(i)
-            p(i) = r(i)
+            p(i) = z(i) + beta * p(i)
         end do
         !$acc end parallel loop
-        !$acc wait
-        call system_clock(t1)
-        t_init_rp = real(t1 - t0) / real(count_rate)
-        
 
-        !【初期残差の大きさ計算】
-        call system_clock(t0, count_rate)
-        rr = 0.0d0
-        !$acc parallel loop reduction(+:rr)
-        do i = 1, n
-            rr = rr + r(i) * r(i)
-        end do
-        !$acc end parallel loop
-        !$acc wait
-        call system_clock(t1)
-        t_init_rr = real(t1 - t0) / real(count_rate)
+        rz = rz_new
+    end do
 
+    !$acc end data
 
-        do iter = 1,2 *n
-            if (rr < 1.0d-20) exit
+    print *, "反復回数：", iter - 1
 
-            call system_clock(t0, count_rate)
-            call matvec(n, values, col_idx, row_ptr, p, Ap)
-            !$acc wait
-            call system_clock(t1)
-            t_matvec_iter = t_matvec_iter + real(t1 - t0) / real(count_rate)
-                
-            !【alphaの計算】
-            call system_clock(t0, count_rate)
-            pAp = 0.0d0
-            !$acc parallel loop reduction(+:pAp)
-            do i = 1, n
-                pAp = pAp + p(i) * Ap(i)
-            end do
-            !$acc end parallel loop
-            !$acc wait
-            call system_clock(t1)
-            t_pAp = t_pAp + real(t1 - t0) / real(count_rate)
-            
-            alpha = rr / pAp
-            
-            !【xとrとrr_newの更新】
-            call system_clock(t0, count_rate)
-            rr_new = 0.0d0
-            !$acc parallel loop reduction(+:rr_new)
-            do i = 1, n
-                x(i) = x(i) + alpha * p(i)
-                r(i) = r(i) - alpha * Ap(i)
-                rr_new = rr_new + r(i) * r(i)
-            end do
-            !$acc end parallel loop
-            !$acc wait
-            call system_clock(t1)
-            t_update_xrrrnew = t_update_xrrrnew + real(t1 - t0) / real(count_rate)
-
-            !【betaの計算】
-            beta = rr_new / rr
-
-            !【pの更新】
-            call system_clock(t0, count_rate)
-            !$acc parallel loop
-            do i = 1, n
-                p(i) = r(i) + beta * p(i)
-            end do
-            !$acc end parallel loop
-            !$acc wait
-            call system_clock(t1)
-            t_update_p = t_update_p + real(t1 - t0) / real(count_rate)
-
-            !【残差の大きさの更新】
-            rr = rr_new
-        end do
-        !$acc end data
-
-
-        !====================================
-        !【計算時間の出力】
-        !====================================
-        write(*,'(A)')        '====== CG Solver Detailed Timing ======'
-        write(*,'(A,F12.8)') '[1] matvec (init)      [s]: ', t_matvec_init
-        write(*,'(A,F12.8)') '[2] init r,p           [s]: ', t_init_rp
-        write(*,'(A,F12.8)') '[3] init rr            [s]: ', t_init_rr
-        write(*,'(A,F12.8)') '[4] matvec (iter, cum) [s]: ', t_matvec_iter
-        write(*,'(A,F12.8)') '[5] pAp    (cum)       [s]: ', t_pAp
-        write(*,'(A,F12.8)') '[6] update x,r,rr_new (cum)   [s]: ', t_update_xrrrnew
-        write(*,'(A,F12.8)') '[7] update p   (cum)   [s]: ', t_update_p
-        write(*,'(A,F12.8)') '--- TOTAL              [s]: ', &
-            t_matvec_init + t_init_rp + t_init_rr + &
-            t_matvec_iter + t_pAp + t_update_xrrrnew  + t_update_p
-        write(*,'(A,I10)')    '反復回数: ', iter
-    end subroutine
+end subroutine
 
 end program 

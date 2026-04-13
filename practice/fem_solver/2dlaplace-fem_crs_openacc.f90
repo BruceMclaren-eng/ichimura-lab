@@ -346,22 +346,6 @@ contains
 
     end subroutine
 
-    subroutine matvec(n, values, col_idx, row_ptr, x, y)
-        integer, intent(in) :: n
-        double precision, intent(in) :: values(:), x(:)
-        integer, intent(in) :: col_idx(:), row_ptr(:)
-        double precision, intent(inout) :: y(:)
-
-        integer :: i, k
-        !$acc kernels
-        do i = 1, n
-            y(i) = 0.0d0
-            do k = row_ptr(i), row_ptr(i+1) - 1
-                y(i) = y(i) + values(k) * x(col_idx(k))
-            end do
-        end do
-        !$acc end kernels
-    end subroutine
 
     
     subroutine dirichlet_row(node, n, valuesm, col_idx, row_ptr, F_vec, bc_val)
@@ -382,6 +366,25 @@ contains
         end do
 
         F_vec(node) = bc_val
+    end subroutine
+
+
+    
+    subroutine matvec(n, values, col_idx, row_ptr, x, y)
+        integer, intent(in) :: n
+        double precision, intent(in) :: values(:), x(:)
+        integer, intent(in) :: col_idx(:), row_ptr(:)
+        double precision, intent(inout) :: y(:)
+
+        integer :: i, k
+        !$acc kernels
+        do i = 1, n
+            y(i) = 0.0d0
+            do k = row_ptr(i), row_ptr(i+1) - 1
+                y(i) = y(i) + values(k) * x(col_idx(k))
+            end do
+        end do
+        !$acc end kernels
     end subroutine
 
     subroutine cg_solver(n, values, col_idx, row_ptr, b, x)

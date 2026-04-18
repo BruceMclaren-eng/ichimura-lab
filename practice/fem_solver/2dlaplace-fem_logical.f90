@@ -34,12 +34,13 @@ program fem_practice
     double precision, allocatable :: diag(:)
 
     !　【静的配列】
-    integer :: coo_nnz
     integer :: coo_ptr
-    integer :: e, i, j
+    integer :: e, i, j, k
     integer :: global_nodes(3)
     logical, allocatable :: is_fixed(:)
     real :: t_start, t_end
+    integer :: nnz_global
+    integer :: coo_nnz_local
 
     call cpu_time(t_start)
     !===================================
@@ -51,8 +52,8 @@ program fem_practice
     y_min = 0.0d0
     y_max = 2.0d0
     !分割数の定義
-    nx = 2
-    ny = 2
+    nx = 50
+    ny = 50
     !全ノード数
     n_nodes = (nx + 1) * (ny + 1)
     !全要素数
@@ -84,17 +85,18 @@ program fem_practice
     !==================================
     !【Step4:要素剛性行列作成】
     !==================================
-    coo_nnz = n_elems * 9 !非ゼロ要素の最大値で定義
-    allocate(coo_row(coo_nnz))
-    allocate(coo_col(coo_nnz))
-    allocate(coo_val(coo_nnz))
+    coo_nnz_local = n_elems * 9 !非ゼロ要素の最大値で定義
+    allocate(coo_row(coo_nnz_local))
+    allocate(coo_col(coo_nnz_local))
+    allocate(coo_val(coo_nnz_local))
     coo_ptr = 0
 
     do e = 1, n_elems
         global_nodes = elems(e,:)
         call calc_elem_stiffness(nodes(global_nodes(1)), nodes(global_nodes(2)), nodes(global_nodes(3)), K_local)
-        do i = 1, 3
-            do j = 1,3
+        do j = 1, 3
+            do i = 1,3
+                     nnz_global = nnz_global + 1
                 coo_ptr = coo_ptr + 1
                 coo_row(coo_ptr) = global_nodes(i)
                 coo_col(coo_ptr) = global_nodes(j)
@@ -106,7 +108,7 @@ program fem_practice
     print *, "COO Assembly Done"
 
     call coo_to_crs(coo_row, coo_col, coo_val, coo_ptr, n_nodes, row_ptr, col_idx, values)
-    print *, "CRS Conversion Done: nnz =", row_ptr(n_nodes + 1) - 1
+    print *, "CRS Conversion Done: nnz =", nnz_global
     deallocate(coo_row, coo_col, coo_val)
 
     !==================================
@@ -162,6 +164,7 @@ program fem_practice
     !==================================
     call cpu_time(t_end)
     print *, "Total Computation Time: ", t_end - t_start, " seconds"
+
 
 contains
     !節点の座標と要素のノード番号の定義
@@ -227,7 +230,7 @@ contains
         double precision :: mat_J(2,2), mat_L(2,2)
         double precision :: detJ, val_m, area
         double precision :: v(3,2), res(3,2)
-        integer :: i,j_idx
+        integer :: i,j
 
         !節点座標をセット
         x(1) = p1%x; y(1) = p1%y
@@ -264,13 +267,12 @@ contains
 
         !要素剛性行列 k_matの計算
         do i = 1, 3
-            do j_idx = 1,3
-                k_mat(i, j_idx) = (res(i,1)*res(j_idx,1) + res(i,2)*res(j_idx,2)) * area
+            do j = 1,3
+                k_mat(i, j) = (res(i,1)*res(j,1) + res(i,2)*res(j,2)) * area
             end do
         end do
     end subroutine
 
-    !要素剛性行列COOから全体剛性行列CRSへの変換
     subroutine coo_to_crs(coo_row, coo_col, coo_val, nnz_in, n, row_ptr, col_idx, values)
         integer,                        intent(in) :: coo_row(:), coo_col(:), nnz_in, n 
         double precision,               intent(in) :: coo_val(:)
@@ -285,12 +287,11 @@ contains
         integer,          allocatable :: row_ptr_orig(:)
         double precision, allocatable :: sorted_val(:)
         double precision, allocatable :: dense_buffer(:)
-
+        logical,          allocatable :: in_use(:)
 
         ! row_ptrの作成
         allocate(row_ptr(n+1))
         row_ptr = 0
-
         do k = 1, nnz_in
             row_ptr(coo_row(k) + 1) = row_ptr(coo_row(k) + 1) + 1
         end do
@@ -300,13 +301,11 @@ contains
             row_ptr(i) = row_ptr(i) + row_ptr(i-1)
         end do
 
-        !cooの暫定準備
+        ! COOの暫定準備
         allocate(pos(n))
         allocate(sorted_col(nnz_in))
         allocate(sorted_val(nnz_in))
-
         pos = row_ptr(1:n)
-
         do k = 1, nnz_in
             i = coo_row(k)
             sorted_col(pos(i)) = coo_col(k)
@@ -315,30 +314,28 @@ contains
         end do
         deallocate(pos)
 
-        !重複の処理
+        ! 重複の処理
         allocate(row_ptr_orig(n+1))
         row_ptr_orig = row_ptr
-
         allocate(dense_buffer(n))
         allocate(col_idx(nnz_in))
         allocate(values(nnz_in))
+        allocate(in_use(n))
 
         dense_buffer = 0.0d0
-
+        in_use = .false.
         nnz = 0
         row_ptr(1) = 1
 
         do i = 1, n
             used_count = 0
-
             do k = row_ptr_orig(i), row_ptr_orig(i+1) - 1
                 col = sorted_col(k)
-
-                if (dense_buffer(col) == 0.0d0) then
+                if (.not. in_use(col)) then
                     used_count = used_count + 1
                     used_cols(used_count) = col
+                    in_use(col) = .true.
                 end if
-
                 dense_buffer(col) = dense_buffer(col) + sorted_val(k)
             end do
 
@@ -348,12 +345,13 @@ contains
                 col_idx(nnz) = col
                 values(nnz) = dense_buffer(col)
                 dense_buffer(col) = 0.0d0
-            end do 
+                in_use(col) = .false.
+            end do
 
             row_ptr(i+1) = nnz + 1
         end do
 
-        deallocate(row_ptr_orig,dense_buffer,sorted_col,sorted_val)
+        deallocate(row_ptr_orig, dense_buffer, sorted_col, sorted_val, in_use)
 
     end subroutine
 

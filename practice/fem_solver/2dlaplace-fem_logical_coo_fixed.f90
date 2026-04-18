@@ -32,14 +32,14 @@ program fem_practice
     integer,          allocatable :: row_ptr(:), col_idx(:)
     double precision, allocatable :: values(:)
     double precision, allocatable :: diag(:)
+    double precision, allocatable :: K_semilocal(:, :, :)
 
     !　【静的配列】
-    integer :: coo_nnz
     integer :: coo_ptr
-    integer :: e, i, j
+    integer :: e, i, j, k
     integer :: global_nodes(3)
-    logical, allocatable :: is_fixed(:)
     real :: t_start, t_end
+    integer :: nnz_global
 
     call cpu_time(t_start)
     !===================================
@@ -51,8 +51,8 @@ program fem_practice
     y_min = 0.0d0
     y_max = 2.0d0
     !分割数の定義
-    nx = 2
-    ny = 2
+    nx = 50
+    ny = 50
     !全ノード数
     n_nodes = (nx + 1) * (ny + 1)
     !全要素数
@@ -84,30 +84,21 @@ program fem_practice
     !==================================
     !【Step4:要素剛性行列作成】
     !==================================
-    coo_nnz = n_elems * 9 !非ゼロ要素の最大値で定義
-    allocate(coo_row(coo_nnz))
-    allocate(coo_col(coo_nnz))
-    allocate(coo_val(coo_nnz))
+    coo_nnz_local = n_elems * 9 !非ゼロ要素の最大値で定義
+    allocate(K_semilocal(n_elems, n_edges, n_edges))
     coo_ptr = 0
 
     do e = 1, n_elems
         global_nodes = elems(e,:)
         call calc_elem_stiffness(nodes(global_nodes(1)), nodes(global_nodes(2)), nodes(global_nodes(3)), K_local)
-        do i = 1, 3
-            do j = 1,3
-                coo_ptr = coo_ptr + 1
-                coo_row(coo_ptr) = global_nodes(i)
-                coo_col(coo_ptr) = global_nodes(j)
-                coo_val(coo_ptr) = K_local(i,j)
-            end do
-        end do
+        K_semilocal(e,:,:) = K_local
     end do
 
+    print *, "K_semilocal(1,:,:)=", K_semilocal(1,:,:)
     print *, "COO Assembly Done"
 
-    call coo_to_crs(coo_row, coo_col, coo_val, coo_ptr, n_nodes, row_ptr, col_idx, values)
-    print *, "CRS Conversion Done: nnz =", row_ptr(n_nodes + 1) - 1
-    deallocate(coo_row, coo_col, coo_val)
+    call calc_global_stiffness(K_semilocal, n_elems, n_edges, row_ptr, col_idx, values)
+    print *, "CRS Conversion Done: nnz =", nnz_global
 
     !==================================
     !【Step5:ベクトルFの作成】
@@ -162,6 +153,7 @@ program fem_practice
     !==================================
     call cpu_time(t_end)
     print *, "Total Computation Time: ", t_end - t_start, " seconds"
+
 
 contains
     !節点の座標と要素のノード番号の定義
@@ -227,7 +219,7 @@ contains
         double precision :: mat_J(2,2), mat_L(2,2)
         double precision :: detJ, val_m, area
         double precision :: v(3,2), res(3,2)
-        integer :: i,j_idx
+        integer :: i,j
 
         !節点座標をセット
         x(1) = p1%x; y(1) = p1%y
@@ -259,103 +251,100 @@ contains
         !全体座標微分への変換
         do i = 1, 3
             res(i,1) = mat_J(1,1) * v(i,1) + mat_L(2,1) * v(i,2)
-            res(i,2) = mat_J(2,1) * v(i,1) + mat_L(2,2) * v(i,2)
+            res(i,2) = mat_J(1,2) * v(i,1) + mat_L(2,2) * v(i,2)
         end do
 
         !要素剛性行列 k_matの計算
         do i = 1, 3
-            do j_idx = 1,3
-                k_mat(i, j_idx) = (res(i,1)*res(j_idx,1) + res(i,2)*res(j_idx,2)) * area
+            do j = 1,3
+                k_mat(i, j) = (res(i,1)*res(j,1) + res(i,2)*res(j,2)) * area
             end do
         end do
     end subroutine
 
-    !要素剛性行列COOから全体剛性行列CRSへの変換
-    subroutine coo_to_crs(coo_row, coo_col, coo_val, nnz_in, n, row_ptr, col_idx, values)
-        integer,                        intent(in) :: coo_row(:), coo_col(:), nnz_in, n 
-        double precision,               intent(in) :: coo_val(:)
+    subroutine calc_global_stiffness(K_semilocal, n_elems, n_edges, row_ptr, col_idx, values)
+        integer,                        intent(in) :: n_edges, n_elems
+        double precision,               intent(in) :: K_semilocal(:, :, :)
         integer, allocatable,          intent(out) :: row_ptr(:), col_idx(:)
         double precision, allocatable, intent(out) :: values(:)
 
-        integer          :: i, k, col, nnz
-        integer          :: used_cols(20)
-        integer          :: used_count
-        integer,          allocatable :: pos(:)
-        integer,          allocatable :: sorted_col(:)
-        integer,          allocatable :: row_ptr_orig(:)
-        double precision, allocatable :: sorted_val(:)
-        double precision, allocatable :: dense_buffer(:)
+        integer  :: i, j, k, gi, gj, ptr, crs_pos, max_nnz
+        integer, allocatable ::col_idx_temp(:,:), nnz_row(:)
+        logical :: already_exists
 
+        max_nnz = 10
+        allocate(nnz_row(n_nodes))
+        allocate(col_idx_temp(n_nodes, max_nnz))
+        nnz_row = 0
+        col_idx_temp = 0
 
-        ! row_ptrの作成
-        allocate(row_ptr(n+1))
-        row_ptr = 0
-
-        do k = 1, nnz_in
-            row_ptr(coo_row(k) + 1) = row_ptr(coo_row(k) + 1) + 1
-        end do
-
-        row_ptr(1) = 1
-        do i = 2, n+1
-            row_ptr(i) = row_ptr(i) + row_ptr(i-1)
-        end do
-
-        !cooの暫定準備
-        allocate(pos(n))
-        allocate(sorted_col(nnz_in))
-        allocate(sorted_val(nnz_in))
-
-        pos = row_ptr(1:n)
-
-        do k = 1, nnz_in
-            i = coo_row(k)
-            sorted_col(pos(i)) = coo_col(k)
-            sorted_val(pos(i)) = coo_val(k)
-            pos(i) = pos(i) + 1
-        end do
-        deallocate(pos)
-
-        !重複の処理
-        allocate(row_ptr_orig(n+1))
-        row_ptr_orig = row_ptr
-
-        allocate(dense_buffer(n))
-        allocate(col_idx(nnz_in))
-        allocate(values(nnz_in))
-
-        dense_buffer = 0.0d0
-
-        nnz = 0
-        row_ptr(1) = 1
-
-        do i = 1, n
-            used_count = 0
-
-            do k = row_ptr_orig(i), row_ptr_orig(i+1) - 1
-                col = sorted_col(k)
-
-                if (dense_buffer(col) == 0.0d0) then
-                    used_count = used_count + 1
-                    used_cols(used_count) = col
-                end if
-
-                dense_buffer(col) = dense_buffer(col) + sorted_val(k)
+        do e = 1, n_elems
+            do i = 1, n_edges
+                gi = elems(e, i)
+                do j = 1, n_edges
+                    gj = elems(e, j)
+                    already_exists = .false.
+                    do k = 1, nnz_row(gi)
+                        if (col_idx_temp(gi, k) == gj) then 
+                            already_exists = .true.
+                            exit
+                        end if
+                    end do
+                    if (.not. already_exists) then
+                        nnz_row(gi) = nnz_row(gi) + 1
+                        if (nnz_row(gi) > max_nnz) then
+                            print *, "Error: Exceeded maximum non-zeros per row"
+                            stop
+                        end if
+                    col_idx_temp(gi, nnz_row(gi)) = gj
+                    end if
+                end do
             end do
-
-            do k = 1, used_count
-                col = used_cols(k)
-                nnz = nnz + 1
-                col_idx(nnz) = col
-                values(nnz) = dense_buffer(col)
-                dense_buffer(col) = 0.0d0
-            end do 
-
-            row_ptr(i+1) = nnz + 1
         end do
 
-        deallocate(row_ptr_orig,dense_buffer,sorted_col,sorted_val)
+        !row_ptrの作成
+        allocate(row_ptr(n_nodes + 1))
+        row_ptr(1) = 1
+        do gi = 1, n_nodes
+            row_ptr(gi + 1) = row_ptr(gi) + nnz_row(gi)
+        end do
+        nnz_global = row_ptr(n_nodes + 1) - 1
+        
+        print *, "Estimated nnz_global: ", nnz_global
+
+        !col_idxの構築
+        allocate(col_idx(nnz_global))
+        crs_pos = 0
+        do gi = 1, n_nodes
+            do ptr = 1, nnz_row(gi)
+                if (col_idx_temp(gi, ptr) /= 0) then
+                    crs_pos = crs_pos + 1
+                    col_idx(crs_pos) = col_idx_temp(gi, ptr)
+                end if
+            end do
+        end do
+        deallocate(nnz_row, col_idx_temp)
+
+        !valuesの構築
+        allocate(values(nnz_global))
+        values = 0.0d0
+        do e = 1, n_elems
+            do i = 1, n_edges
+                gi = elems(e, i)
+                do j = 1, n_edges
+                    gj = elems(e, j)
+                    do k = row_ptr(gi), row_ptr(gi + 1) - 1
+                        if (col_idx(k) == gj) then
+                            values(k) = values(k) + K_semilocal(e, i, j)
+                            exit
+                        end if
+                    end do
+                end do
+            end do
+        end do
 
     end subroutine
+
 
     subroutine matvec(n, values, col_idx, row_ptr, x, y)
         integer, intent(in) :: n

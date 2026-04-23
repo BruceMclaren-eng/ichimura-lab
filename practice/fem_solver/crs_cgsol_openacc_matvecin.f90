@@ -8,7 +8,6 @@ end module fem_types
 
 program fem_practice
     use fem_types
-    use matvec_cuda_module
     implicit none
 
 
@@ -38,12 +37,12 @@ program fem_practice
     integer :: e, i, j, k
     integer :: global_nodes(3)
     real :: t_start, t_end
+    integer(8) :: t1, t2, rate, c1, c2
     integer :: nnz_global
     real :: t_pcg_start, t_pcg_end
-    integer :: t1, t2, rate
-    double precision :: total_time
     
-    call system_clock(t1,rate)
+    call system_clock(t1, rate)
+    call cpu_time(t_start)
     !===================================
     !【Step1:メッシュの作成】
     !===================================    
@@ -128,11 +127,14 @@ program fem_practice
     !【Step6:方程式を解く】
     !==================================
     call cpu_time (t_pcg_start)
+    call system_clock(c1, rate)
     call pcg_solver(n_nodes, values, col_idx, row_ptr, F_vec, U_vec, diag)
+    call system_clock(c2, rate)
     call cpu_time (t_pcg_end)
     deallocate(diag)
     !print *, "Calculation Finished"
     print *, "CG Method Time: ", t_pcg_end - t_pcg_start, " seconds"
+    print *, "CG Method Wall Time", real(c2-c1, 8) / real(rate, 8), "seconds"
     !print *, "========================================"
     !print *, " FINAL RESULTS (Nodal Values)"
     !print *, "========================================"
@@ -150,9 +152,10 @@ program fem_practice
     !==================================
     !【Step7:計算時間の出力】
     !==================================
-    call system_clock(t2,rate)
-    total_time = real(t2, 8) - real(t1, 8) / real(rate, 8)
-    print *, "Total Computation Time: ", total_time, " seconds"
+    call cpu_time(t_end)
+    call system_clock(t2, rate)
+    print *, "Total CPU Time: ", t_end - t_start, " seconds"
+    print *, "Wall Time: ", real(t2 - t1, 8) / real(rate, 8), " seconds"
 
 
 contains
@@ -365,6 +368,23 @@ contains
         F_vec(node) = bc_val
     end subroutine
 
+    subroutine matvec(n, values, col_idx, row_ptr, x, y)
+        integer, intent(in) :: n
+        double precision, intent(in) :: values(:), x(:)
+        integer, intent(in) :: col_idx(:), row_ptr(:)
+        double precision, intent(inout) :: y(:)
+
+        integer :: i, k
+        !$acc parallel loop present(values, col_idx, row_ptr, x, y)
+        do i = 1, n
+            y(i) = 0.0d0
+            do k = row_ptr(i), row_ptr(i+1) - 1
+                y(i) = y(i) + values(k) * x(col_idx(k))
+            end do
+        end do
+        !$acc end parallel loop
+    end subroutine
+
     subroutine pcg_solver(n, values, col_idx, row_ptr, b, x, diag)
     integer, intent(in) :: n
     double precision, intent(in) :: values(:), b(:), diag(:)
@@ -373,17 +393,30 @@ contains
 
     double precision :: r(n), p(n), Ap(n), z(n)
     double precision :: alpha, beta, rz, rz_new, pAp
-    integer :: iter, i
+    integer :: iter, i, k
+    integer(8) :: d1, d2, rate
+    real(8) :: t_spmv, t_pap, t_update, t_pvec
+
+    t_spmv = 0.0d0
+    t_pap = 0.0d0
+    t_update = 0.0d0
+    t_pvec = 0.0d0
 
     !$acc data copyin(values, col_idx, row_ptr, b, diag) &
     !$acc      copy(x) &
     !$acc      create(r, p, Ap, z)
 
     ! 初期残差
-    !$acc host_data use_device(values, col_idx, row_ptr, x, Ap)
-    call matvec_cuda_device(n, values, col_idx, row_ptr, x, Ap)
-    !$acc end host_data
-    
+
+    !$acc parallel loop
+    do i = 1, n
+        Ap(i) = 0.0d0
+        do k = row_ptr(i), row_ptr(i+1) - 1
+            Ap(i) = Ap(i) + values(k) * x(col_idx(k))
+        end do
+    end do
+    !$acc end parallel loop    
+
     !$acc parallel loop
     do i = 1, n
         r(i) = b(i) - Ap(i)
@@ -399,13 +432,19 @@ contains
     end do
     !$acc end parallel loop
 
+
     do iter = 1, 2*n
         if (rz < 1.0d-10) exit
 
-        !$acc host_data use_device(values, col_idx, row_ptr, p, Ap)
-        call matvec_cuda_device(n, values, col_idx, row_ptr, p, Ap)
-        !$acc end host_data
-        
+    !$acc parallel loop
+    do i = 1, n
+        Ap(i) = 0.0d0
+        do k = row_ptr(i), row_ptr(i+1) - 1
+            Ap(i) = Ap(i) + values(k) * p(col_idx(k))
+        end do
+    end do
+    !$acc end parallel loop    
+
         pAp = 0.0d0
         !$acc parallel loop reduction(+:pAp)
         do i = 1, n
@@ -434,6 +473,7 @@ contains
         !$acc end parallel loop
 
         rz = rz_new
+
     end do
 
     !$acc end data

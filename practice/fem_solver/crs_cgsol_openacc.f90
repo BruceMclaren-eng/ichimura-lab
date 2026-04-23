@@ -37,9 +37,11 @@ program fem_practice
     integer :: e, i, j, k
     integer :: global_nodes(3)
     real :: t_start, t_end
+    integer(8) :: t1, t2, rate, c1, c2
     integer :: nnz_global
     real :: t_pcg_start, t_pcg_end
     
+    call system_clock(t1, rate)
     call cpu_time(t_start)
     !===================================
     !【Step1:メッシュの作成】
@@ -50,7 +52,7 @@ program fem_practice
     y_min = 0.0d0
     y_max = 2.0d0
     !分割数の定義
-    nx = 1000
+    nx = 2000
     ny = 4000
     !全ノード数
     n_nodes = (nx + 1) * (ny + 1)
@@ -125,11 +127,14 @@ program fem_practice
     !【Step6:方程式を解く】
     !==================================
     call cpu_time (t_pcg_start)
+    call system_clock(c1, rate)
     call pcg_solver(n_nodes, values, col_idx, row_ptr, F_vec, U_vec, diag)
+    call system_clock(c2, rate)
     call cpu_time (t_pcg_end)
     deallocate(diag)
     !print *, "Calculation Finished"
     print *, "CG Method Time: ", t_pcg_end - t_pcg_start, " seconds"
+    print *, "CG Method Wall Time", real(c2-c1, 8) / real(rate, 8), "seconds"
     !print *, "========================================"
     !print *, " FINAL RESULTS (Nodal Values)"
     !print *, "========================================"
@@ -148,7 +153,9 @@ program fem_practice
     !【Step7:計算時間の出力】
     !==================================
     call cpu_time(t_end)
-    !print *, "Total Computation Time: ", t_end - t_start, " seconds"
+    call system_clock(t2, rate)
+    print *, "Total CPU Time: ", t_end - t_start, " seconds"
+    print *, "Wall Time: ", real(t2 - t1, 8) / real(rate, 8), " seconds"
 
 
 contains
@@ -388,11 +395,19 @@ contains
     double precision :: r(n), p(n), Ap(n), z(n)
     double precision :: alpha, beta, rz, rz_new, pAp
     integer :: iter, i
+    integer(8) :: d1, d2, rate
+    real(8) :: t_spmv, t_pap, t_update, t_pvec, cpu_s, cpu_e
+
+    t_spmv = 0.0d0
+    t_pap = 0.0d0
+    t_update = 0.0d0
+    t_pvec = 0.0d0
 
     !$acc data copyin(values, col_idx, row_ptr, b, diag) &
     !$acc      copy(x) &
     !$acc      create(r, p, Ap, z)
 
+    call cpu_time(cpu_s)
     ! 初期残差
     call matvec(n, values, col_idx, row_ptr, x, Ap)
     !$acc parallel loop
@@ -413,17 +428,26 @@ contains
     do iter = 1, 2*n
         if (rz < 1.0d-10) exit
 
+        call system_clock(d1, rate)
         call matvec(n, values, col_idx, row_ptr, p, Ap)
+        call system_clock(d2, rate)
 
+        t_spmv = t_spmv + real(d2 - d1, 8) / real(rate, 8)
+
+        call system_clock(d1, rate)
         pAp = 0.0d0
         !$acc parallel loop reduction(+:pAp)
         do i = 1, n
             pAp = pAp + p(i) * Ap(i)
         end do
         !$acc end parallel loop
+        call system_clock(d2, rate)
+
+        t_pap = t_pap + real(d2 - d1, 8) / real(rate, 8)
 
         alpha = rz / pAp
 
+        call system_clock(d1, rate)
         rz_new = 0.0d0
         !$acc parallel loop reduction(+:rz_new)
         do i = 1, n
@@ -433,22 +457,34 @@ contains
             rz_new = rz_new + r(i) * z(i)
         end do
         !$acc end parallel loop
+        call system_clock(d2, rate)
+
+        t_update = t_update + real(d2-d1, 8) / real(rate, 8)
 
         beta = rz_new / rz
 
+        call system_clock(d1, rate)
         !$acc parallel loop
         do i = 1, n
             p(i) = z(i) + beta * p(i)
         end do
         !$acc end parallel loop
+        call system_clock(d2, rate)
+
+        t_pvec = t_pvec + real(d2-d1, 8) / real(rate, 8)
 
         rz = rz_new
     end do
+    call cpu_time(cpu_e)
 
     !$acc end data
 
     print *, "Number of iterations:", iter - 1
-
+    print *, "t_spmv : ", t_spmv, "seconds"
+    print *, "t_pap : ", t_pap, "seconds"
+    print *, "t_update : ", t_update, "seconds"
+    print *, "t_pvec : ", t_pvec, "seconds"
+    print *, "CPU time while GPU Kernels : ", cpu_e - cpu_s, "seconds"
 end subroutine
 
 end program 

@@ -1,6 +1,6 @@
 V35 :0x24 fem_types
-18 crs_cgsol_cuda.f90 S624 0
-04/20/2026  08:04:42
+21 crs_cgsol_openacc.f90 S624 0
+04/23/2026  16:20:15
 enduse
 D 58 26 626 16 625 7
 D 64 23 7 1 0 11 0 0 0 0 0

@@ -435,7 +435,7 @@ contains
     end do
     !$acc end parallel loop
 
-    do iter = 1, 10
+    do iter = 1, 2* n
 
         call system_clock(a1, rate)
         call matvec(n, values, col_idx, row_ptr, p, Ap)

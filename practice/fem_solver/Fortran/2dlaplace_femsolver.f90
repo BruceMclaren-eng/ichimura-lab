@@ -375,7 +375,25 @@ contains
         F_vec(node) = bc_val
     end subroutine
 
-    subroutine matvec(n, values, col_idx, row_ptr, x, Ap)
+    subroutine matvec1(n, values, col_idx, row_ptr, x, Ap)
+        integer, intent(in) :: n
+        real(4), intent(in) :: values(:), x(:)
+        integer, intent(in) :: col_idx(:), row_ptr(:)
+        real(4), intent(inout) :: Ap(:)
+        integer :: i, k
+
+        !$acc parallel loop present(values, col_idx, row_ptr, x, Ap)
+        do i = 1, n
+            Ap(i) = 0.0e0
+            do k = row_ptr(i), row_ptr(i+1) - 1
+                Ap(i) = Ap(i) + values(k) * x(col_idx(k))
+            end do
+        end do
+        !$acc end parallel loop
+        !$acc wait
+    end subroutine
+
+    subroutine matvec2(n, values, col_idx, row_ptr, x, Ap)
         integer, intent(in) :: n
         real(4), intent(in) :: values(:), x(:)
         integer, intent(in) :: col_idx(:), row_ptr(:)
@@ -416,7 +434,7 @@ contains
     !$acc      create(r, p, Ap, z)
 
     ! 初期残差
-    call matvec(n, values, col_idx, row_ptr, x, Ap)
+    call matvec1(n, values, col_idx, row_ptr, x, Ap)
     
     r0_sq = 0.0e0
     !$acc parallel loop reduction(+:r0_sq)
@@ -435,10 +453,10 @@ contains
     end do
     !$acc end parallel loop
 
-    do iter = 1, 2* n
+    do iter = 1, 1
 
         call system_clock(a1, rate)
-        call matvec(n, values, col_idx, row_ptr, p, Ap)
+        call matvec2(n, values, col_idx, row_ptr, p, Ap)
         call system_clock(a2, rate)
 
         t_spmv = t_spmv + real(a2 - a1, 8) / real(rate, 8)

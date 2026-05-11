@@ -1,0 +1,23 @@
+# local settings
+.claude/
+
+# per-project outputs
+projects/*/results/
+
+# compiled artifacts
+*.exe
+*.out
+*.mod
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exp
+*.lib
+
+# profiler outputs
+*.ncu-rep
+
+# logs
+*.log

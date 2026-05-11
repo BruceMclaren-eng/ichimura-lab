@@ -1,0 +1,57 @@
+{
+  "gpu": {
+    "name": "NVIDIA A100-PCIE-40GB",
+    "peak_fp32_gflops": 19500,
+    "peak_fp64_gflops": 9700,
+    "peak_dram_bandwidth_gbs": 1555,
+    "precision": "fp32"
+  },
+  "kernels": {
+    "fem_practice_matvec1_385_gpu": {
+      "note": "SpMV initial value setting",
+      "need check": "Yes"
+    },
+    "fem_practice_pcg_solver_440_gpu": {
+      "note": "r,z,p initial value setting",
+      "need check": "Yes"
+    },
+    "fem_practice_pcg_solver_440_gpu__red": {
+      "note": "r,z,p initial value setting reduction",
+      "need check": "No"
+    },
+    "fem_practice_pcg_solver_450_gpu": {
+      "note": "rz initial value setting",
+      "need check": "Yes"
+    },
+    "fem_practice_pcg_solver_450_gpu__red": {
+      "note": "rz initial value setting reduction",
+      "need check": "No"
+    },
+    "fem_practice_matvec2_403_gpu": {
+      "note": "SpMV loop",
+      "need check": "Yes"
+    },
+    "fem_practice_pcg_solver_466_gpu": {
+      "note": "pAp loop",
+      "need check": "Yes"
+    },
+    "fem_practice_pcg_solver_466_gpu__red":{
+      "note": "pAp loop reduction",
+      "need check": "No"
+    },
+      "fem_practice_pcg_solver_481_gpu": {
+        "note": "r,z,p loop",
+        "need check": "Yes"
+    },
+      "fem_practice_pcg_solver_481_gpu__red": {
+        "note": "r,z,p loop reduction",
+        "need check": "No"
+    },
+      "fem_practice_pcg_solver_498_gpu": {
+        "note": "p update loop",
+        "need check": "Yes"
+    }
+  }
+}
+
+
